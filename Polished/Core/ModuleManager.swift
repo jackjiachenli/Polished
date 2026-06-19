@@ -17,7 +17,8 @@ class ModuleManager {
 
     private init() {
         modules = [
-            AppQuitter()
+            AppQuitter(),
+            WindowSnapper(),
         ]
         loadEnabledState()
         startEnabledModules()

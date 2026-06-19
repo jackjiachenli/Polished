@@ -14,6 +14,7 @@ struct SettingsView: View {
 
     private static let moduleDescriptions: [String: String] = [
         "app-quitter": "Quits apps when their last window is closed",
+        "window-snapper": "Snaps windows to screen edges and corners when dragged",
     ]
 
     var body: some View {
