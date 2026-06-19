@@ -9,14 +9,8 @@ final class AppQuitter: Module {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var axObservers: [pid_t: AXObserver] = [:]
     private var monitoredApps: [pid_t: NSRunningApplication] = [:]
-    private var observedWindows: [pid_t: [AXUIElement]] = [:]
-    private var pendingChecks: [pid_t: DispatchWorkItem] = [:]
-
-    /// Brief pause so the AX tree reflects the closed window
-    private let trackedWindowDelay: TimeInterval = 0.05
-    /// Longer path for ambiguous destroys (e.g. Electron focus churn)
-    private let uncertainInitialDelay: TimeInterval = 0.15
-    private let uncertainRetryDelay: TimeInterval = 0.2
+    /// Visible user windows we are actively tracking per process.
+    private var trackedVisibleWindows: [pid_t: [AXUIElement]] = [:]
 
     private let excludedBundleIDs: Set<String> = [
         "com.apple.finder",
@@ -94,41 +88,53 @@ final class AppQuitter: Module {
             refcon
         )
 
-        observeAllWindows(pid: pid, observer: observer, refcon: refcon)
+        syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
 
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         axObservers[pid] = observer
     }
 
     private func stopMonitoring(pid: pid_t) {
-        pendingChecks[pid]?.cancel()
-        pendingChecks.removeValue(forKey: pid)
-
         if let observer = axObservers.removeValue(forKey: pid) {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         }
         monitoredApps.removeValue(forKey: pid)
-        observedWindows.removeValue(forKey: pid)
+        trackedVisibleWindows.removeValue(forKey: pid)
     }
 
     fileprivate func handleWindowCreated(pid: pid_t) {
         guard let observer = axObservers[pid] else { return }
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        observeAllWindows(pid: pid, observer: observer, refcon: refcon)
+        syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
     }
 
     fileprivate func handleWindowDestroyed(pid: pid_t, element: AXUIElement) {
         guard axObservers[pid] != nil else { return }
 
-        var observed = observedWindows[pid] ?? []
-        if let index = observed.firstIndex(where: { $0 == element }) {
-            observed.remove(at: index)
-            observedWindows[pid] = observed
-            scheduleCheck(pid: pid, requiresRetry: false)
-        } else if isWindow(element) {
-            // CFEqual match can fail across AX wrappers; accept destroy events on window roles
-            scheduleCheck(pid: pid, requiresRetry: true)
+        let wasTracked = removeTrackedWindow(pid: pid, element: element)
+        guard wasTracked || isWindow(element) else { return }
+
+        if wasTracked, !(trackedVisibleWindows[pid]?.isEmpty ?? true) {
+            // Other windows we were already tracking are still open — no AX round-trip needed.
+            return
         }
+
+        if wasTracked {
+            evaluateQuit(pid: pid)
+        } else {
+            // CFEqual can fail across AX wrappers; defer one runloop turn so the AX tree can update.
+            DispatchQueue.main.async { [weak self] in
+                self?.evaluateQuit(pid: pid)
+            }
+        }
+    }
+
+    private func removeTrackedWindow(pid: pid_t, element: AXUIElement) -> Bool {
+        guard var tracked = trackedVisibleWindows[pid] else { return false }
+        guard let index = tracked.firstIndex(where: { $0 == element }) else { return false }
+        tracked.remove(at: index)
+        trackedVisibleWindows[pid] = tracked
+        return true
     }
 
     private func isWindow(_ element: AXUIElement) -> Bool {
@@ -138,72 +144,82 @@ final class AppQuitter: Module {
         return roleString == kAXWindowRole as String
     }
 
-    private func observeAllWindows(pid: pid_t, observer: AXObserver, refcon: UnsafeMutableRawPointer) {
+    private func syncTrackedWindows(pid: pid_t, observer: AXObserver, refcon: UnsafeMutableRawPointer) {
         let axApp = AXUIElementCreateApplication(pid)
         var windowList: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
-              let windows = windowList as? [AXUIElement] else { return }
+              let windows = windowList as? [AXUIElement] else {
+            trackedVisibleWindows[pid] = []
+            return
+        }
 
-        var observed = observedWindows[pid] ?? []
-        for window in windows {
-            guard !observed.contains(where: { $0 == window }) else { continue }
+        let visible = windows.filter { isVisibleUserWindow($0) }
+        var tracked = (trackedVisibleWindows[pid] ?? []).filter { existing in
+            visible.contains(where: { $0 == existing })
+        }
+
+        for window in visible where !tracked.contains(where: { $0 == window }) {
             AXObserverAddNotification(
                 observer,
                 window,
                 kAXUIElementDestroyedNotification as CFString,
                 refcon
             )
-            observed.append(window)
+            tracked.append(window)
         }
-        observedWindows[pid] = observed
+
+        trackedVisibleWindows[pid] = tracked
     }
 
-    fileprivate func scheduleCheck(pid: pid_t, requiresRetry: Bool) {
-        pendingChecks[pid]?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.checkAndQuitIfNoWindows(pid: pid, requiresRetry: requiresRetry, attempt: 1)
+    private func isVisibleUserWindow(_ window: AXUIElement) -> Bool {
+        guard isWindow(window) else { return false }
+
+        var subrole: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) == .success,
+           let subrole = subrole as? String {
+            let excludedSubroles: Set<String> = [
+                kAXDialogSubrole as String,
+                kAXFloatingWindowSubrole as String,
+                kAXSystemFloatingWindowSubrole as String,
+                "AXDrawer",
+            ]
+            if excludedSubroles.contains(subrole) {
+                return false
+            }
         }
-        pendingChecks[pid] = work
-        let delay = requiresRetry ? uncertainInitialDelay : trackedWindowDelay
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+
+        var minimized: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
+        if (minimized as? Bool) == true { return false }
+
+        var sizeValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+           let sizeValue {
+            var size = CGSize.zero
+            if AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
+               size.width < 100 || size.height < 100 {
+                return false
+            }
+        }
+
+        return true
     }
 
-    private func visibleWindowCount(for pid: pid_t) -> Int? {
-        let axApp = AXUIElementCreateApplication(pid)
-        var windowList: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
-              let windows = windowList as? [AXUIElement] else { return nil }
-
-        return windows.filter { window in
-            var minimized: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
-            return (minimized as? Bool) != true
-        }.count
-    }
-
-    private func checkAndQuitIfNoWindows(pid: pid_t, requiresRetry: Bool, attempt: Int) {
+    private func evaluateQuit(pid: pid_t) {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return }
         guard shouldMonitor(app) else { return }
 
-        guard let visibleCount = visibleWindowCount(for: pid) else { return }
-        guard visibleCount == 0 else { return }
-
-        // Retry only for ambiguous destroys — Electron apps can briefly report 0 windows
-        if requiresRetry && attempt == 1 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + uncertainRetryDelay) { [weak self] in
-                self?.checkAndQuitIfNoWindows(pid: pid, requiresRetry: true, attempt: 2)
-            }
-            return
+        if let observer = axObservers[pid] {
+            let refcon = Unmanaged.passUnretained(self).toOpaque()
+            syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
         }
 
-        if requiresRetry && attempt == 2 {
-            guard let recount = visibleWindowCount(for: pid), recount == 0 else { return }
-        }
+        guard trackedVisibleWindows[pid]?.isEmpty ?? true else { return }
 
         let label = app.localizedName ?? app.bundleIdentifier ?? "unknown"
-        print("AppQuitter: Terminating \(label) — no visible windows remaining")
+        print("AppQuitter: Terminating \(label) (pid \(pid)) — no visible windows remaining")
         let quit = app.terminate()
-        print("AppQuitter: terminate() returned \(quit) for \(label)")
+        print("AppQuitter: terminate() returned \(quit) for \(label) (pid \(pid))")
         stopMonitoring(pid: pid)
     }
 }
