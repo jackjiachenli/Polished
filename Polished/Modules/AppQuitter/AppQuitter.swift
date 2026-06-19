@@ -9,8 +9,14 @@ final class AppQuitter: Module {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var axObservers: [pid_t: AXObserver] = [:]
     private var monitoredApps: [pid_t: NSRunningApplication] = [:]
-    private var observedWindows: [pid_t: Set<ObjectIdentifier>] = [:]
+    private var observedWindows: [pid_t: [AXUIElement]] = [:]
     private var pendingChecks: [pid_t: DispatchWorkItem] = [:]
+
+    /// Brief pause so the AX tree reflects the closed window
+    private let trackedWindowDelay: TimeInterval = 0.05
+    /// Longer path for ambiguous destroys (e.g. Electron focus churn)
+    private let uncertainInitialDelay: TimeInterval = 0.15
+    private let uncertainRetryDelay: TimeInterval = 0.2
 
     private let excludedBundleIDs: Set<String> = [
         "com.apple.finder",
@@ -112,11 +118,24 @@ final class AppQuitter: Module {
     }
 
     fileprivate func handleWindowDestroyed(pid: pid_t, element: AXUIElement) {
-        let windowID = ObjectIdentifier(element)
-        guard var observed = observedWindows[pid], observed.contains(windowID) else { return }
-        observed.remove(windowID)
-        observedWindows[pid] = observed
-        scheduleCheck(pid: pid)
+        guard axObservers[pid] != nil else { return }
+
+        var observed = observedWindows[pid] ?? []
+        if let index = observed.firstIndex(where: { $0 == element }) {
+            observed.remove(at: index)
+            observedWindows[pid] = observed
+            scheduleCheck(pid: pid, requiresRetry: false)
+        } else if isWindow(element) {
+            // CFEqual match can fail across AX wrappers; accept destroy events on window roles
+            scheduleCheck(pid: pid, requiresRetry: true)
+        }
+    }
+
+    private func isWindow(_ element: AXUIElement) -> Bool {
+        var role: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+              let roleString = role as? String else { return false }
+        return roleString == kAXWindowRole as String
     }
 
     private func observeAllWindows(pid: pid_t, observer: AXObserver, refcon: UnsafeMutableRawPointer) {
@@ -127,26 +146,26 @@ final class AppQuitter: Module {
 
         var observed = observedWindows[pid] ?? []
         for window in windows {
-            let id = ObjectIdentifier(window)
-            guard !observed.contains(id) else { continue }
+            guard !observed.contains(where: { $0 == window }) else { continue }
             AXObserverAddNotification(
                 observer,
                 window,
                 kAXUIElementDestroyedNotification as CFString,
                 refcon
             )
-            observed.insert(id)
+            observed.append(window)
         }
         observedWindows[pid] = observed
     }
 
-    fileprivate func scheduleCheck(pid: pid_t) {
+    fileprivate func scheduleCheck(pid: pid_t, requiresRetry: Bool) {
         pendingChecks[pid]?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.checkAndQuitIfNoWindows(pid: pid, attempt: 1)
+            self?.checkAndQuitIfNoWindows(pid: pid, requiresRetry: requiresRetry, attempt: 1)
         }
         pendingChecks[pid] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        let delay = requiresRetry ? uncertainInitialDelay : trackedWindowDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func visibleWindowCount(for pid: pid_t) -> Int? {
@@ -162,22 +181,24 @@ final class AppQuitter: Module {
         }.count
     }
 
-    private func checkAndQuitIfNoWindows(pid: pid_t, attempt: Int) {
+    private func checkAndQuitIfNoWindows(pid: pid_t, requiresRetry: Bool, attempt: Int) {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return }
         guard shouldMonitor(app) else { return }
 
         guard let visibleCount = visibleWindowCount(for: pid) else { return }
         guard visibleCount == 0 else { return }
 
-        // Retry once — Electron apps often report 0 windows briefly during focus changes
-        if attempt == 1 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.checkAndQuitIfNoWindows(pid: pid, attempt: 2)
+        // Retry only for ambiguous destroys — Electron apps can briefly report 0 windows
+        if requiresRetry && attempt == 1 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + uncertainRetryDelay) { [weak self] in
+                self?.checkAndQuitIfNoWindows(pid: pid, requiresRetry: true, attempt: 2)
             }
             return
         }
 
-        guard let recount = visibleWindowCount(for: pid), recount == 0 else { return }
+        if requiresRetry && attempt == 2 {
+            guard let recount = visibleWindowCount(for: pid), recount == 0 else { return }
+        }
 
         let label = app.localizedName ?? app.bundleIdentifier ?? "unknown"
         print("AppQuitter: Terminating \(label) — no visible windows remaining")
