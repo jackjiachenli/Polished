@@ -12,13 +12,17 @@ import Observation
 class ModuleManager {
     static let shared = ModuleManager()
     private(set) var modules: [Module] = []
+    private(set) var clipboardHistory: ClipboardHistory
     private(set) var enabledModuleIDs: Set<String> = []
     private let enabledModulesKey = "enabledModuleIDs"
 
     private init() {
+        let clipboardHistory = ClipboardHistory()
+        self.clipboardHistory = clipboardHistory
         modules = [
             AppQuitter(),
             WindowSnapper(),
+            clipboardHistory,
         ]
         loadEnabledState()
         startEnabledModules()

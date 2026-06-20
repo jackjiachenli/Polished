@@ -15,6 +15,7 @@ struct SettingsView: View {
     private static let moduleDescriptions: [String: String] = [
         "app-quitter": "Quits apps when their last window is closed",
         "window-snapper": "Snaps windows to screen edges and corners when dragged",
+        "clipboard-history": "Keeps a history of copied text, images, and files",
     ]
 
     var body: some View {
@@ -34,6 +35,48 @@ struct SettingsView: View {
                             }
                         }
                     }
+                }
+            }
+            if moduleManager.isEnabled(moduleManager.clipboardHistory) {
+                Section("Clipboard History") {
+                    Toggle("Enable global hotkey", isOn: Binding(
+                        get: { moduleManager.clipboardHistory.useGlobalHotkey },
+                        set: { moduleManager.clipboardHistory.useGlobalHotkey = $0 }
+                    ))
+                    LabeledContent("Shortcut") {
+                        HotkeyRecorder(binding: Binding(
+                            get: { moduleManager.clipboardHistory.hotkeyBinding },
+                            set: { moduleManager.clipboardHistory.hotkeyBinding = $0 }
+                        ))
+                    }
+                    .disabled(!moduleManager.clipboardHistory.useGlobalHotkey)
+
+                    Toggle("Remember history across restarts", isOn: Binding(
+                        get: { moduleManager.clipboardHistory.persistHistory },
+                        set: { moduleManager.clipboardHistory.persistHistory = $0 }
+                    ))
+
+                    Stepper(
+                        value: Binding(
+                            get: { moduleManager.clipboardHistory.maxItems },
+                            set: { moduleManager.clipboardHistory.maxItems = $0 }
+                        ),
+                        in: 5...100,
+                        step: 5
+                    ) {
+                        Text("Max items: \(moduleManager.clipboardHistory.maxItems)")
+                    }
+                    Toggle("Ignore concealed copies (password fields)", isOn: Binding(
+                        get: { moduleManager.clipboardHistory.ignoreConcealed },
+                        set: { moduleManager.clipboardHistory.ignoreConcealed = $0 }
+                    ))
+                    Toggle("Ignore copies from password managers", isOn: Binding(
+                        get: { moduleManager.clipboardHistory.ignoreSensitiveApps },
+                        set: { moduleManager.clipboardHistory.ignoreSensitiveApps = $0 }
+                    ))
+                    Text("Opens a floating picker with \(moduleManager.clipboardHistory.hotkeyDisplayString). Uses Accessibility to simulate ⌘V when you paste a selected item. No Input Monitoring required.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Section("Permissions") {
@@ -57,7 +100,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 320)
+        .frame(width: 420, height: 480)
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
