@@ -2,8 +2,6 @@
 //  ClipboardPickerPanel.swift
 //  Polished
 //
-//  Floating picker shown by the global clipboard hotkey.
-//
 
 import AppKit
 import SwiftUI

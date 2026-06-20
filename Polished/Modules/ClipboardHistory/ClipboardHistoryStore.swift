@@ -2,8 +2,6 @@
 //  ClipboardHistoryStore.swift
 //  Polished
 //
-//  Persists clipboard history to Application Support as JSON.
-//
 
 import Foundation
 

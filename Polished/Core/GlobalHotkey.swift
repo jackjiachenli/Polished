@@ -2,8 +2,6 @@
 //  GlobalHotkey.swift
 //  Polished
 //
-//  Registers a system-wide hotkey via Carbon (no Input Monitoring required).
-//
 
 import Carbon
 import Foundation

@@ -2,8 +2,6 @@
 //  AccessibilityPermission.swift
 //  Polished
 //
-//  Created by Jack Li on 18/6/2026.
-//
 
 import AppKit
 import ApplicationServices

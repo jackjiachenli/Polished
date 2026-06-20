@@ -2,8 +2,6 @@
 //  HotkeyBinding.swift
 //  Polished
 //
-//  Carbon-compatible keyboard shortcut for global hotkeys.
-//
 
 import AppKit
 import Carbon

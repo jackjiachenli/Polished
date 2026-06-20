@@ -1,3 +1,11 @@
+//
+//  AppQuitter.swift
+//  Polished
+//
+// Quits regular apps when their last visible window closes.
+// Requires Accessibility. Excludes Finder and Polished itself.
+//
+
 import AppKit
 import ApplicationServices
 

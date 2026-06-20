@@ -2,9 +2,9 @@
 //  ClipboardHistory.swift
 //  Polished
 //
-//  Polls NSPasteboard.general for changes and keeps a rolling history.
-//  Pick via global hotkey (default ⌘⇧V). Selecting an item writes it back to the
-//  pasteboard and simulates Cmd+V (requires Accessibility permission).
+// Polls NSPasteboard.general for changes and keeps a rolling history.
+// Pick via global hotkey (default ⌘⇧V). Selecting an item writes it back to the
+// pasteboard and simulates Cmd+V (requires Accessibility permission).
 //
 
 import AppKit

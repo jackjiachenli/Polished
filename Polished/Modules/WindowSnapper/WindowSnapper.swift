@@ -1,3 +1,10 @@
+//
+//  WindowSnapper.swift
+//  Polished
+//
+// Drag-to-edge/corner snap via CGEvent tap; requires Accessibility.
+//
+
 import AppKit
 import ApplicationServices
 import Observation

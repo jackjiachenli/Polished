@@ -2,8 +2,6 @@
 //  HotkeyRecorder.swift
 //  Polished
 //
-//  Click-to-record keyboard shortcut picker for Settings.
-//
 
 import AppKit
 import Carbon
