@@ -9,11 +9,13 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(ModuleManager.self) private var moduleManager
     @State private var axGranted = AccessibilityPermission.isGranted
+    @State private var showRestartAlert = false
 
     private static let moduleDescriptions: [String: String] = [
         "app-quitter": "Quits apps when their last window is closed",
         "window-snapper": "Snaps windows to screen edges and corners when dragged",
         "clipboard-history": "Keeps a history of copied text, images, and files",
+        "finder-enhancements": "Explorer-like improvements for Finder",
     ]
 
     var body: some View {
@@ -72,7 +74,24 @@ struct SettingsView: View {
                         get: { moduleManager.clipboardHistory.ignoreSensitiveApps },
                         set: { moduleManager.clipboardHistory.ignoreSensitiveApps = $0 }
                     ))
+                    Text("Password managers mark copies as concealed. Turn off both ignore options above to test capturing them.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Text("Opens a floating picker with \(moduleManager.clipboardHistory.hotkeyDisplayString). Uses Accessibility to simulate ⌘V when you paste a selected item. No Input Monitoring required.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if moduleManager.isEnabled(moduleManager.finderEnhancements) {
+                Section("Finder Enhancements") {
+                    Toggle("Cut", isOn: Binding(
+                        get: { moduleManager.finderEnhancements.cutEnabled },
+                        set: { moduleManager.finderEnhancements.cutEnabled = $0 }
+                    ))
+                    Text("⌘X marks selected files for move; ⌘V in a destination folder moves them instead of copying. Esc clears the cut mark.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Requires Accessibility and Input Monitoring. Paste destination may also need Automation permission to control Finder.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -88,24 +107,52 @@ struct SettingsView: View {
                     }
                 }
                 if !axGranted {
-                    Button("Open System Settings") {
+                    Button("Open Accessibility Settings") {
                         AccessibilityPermission.openSystemSettings()
                     }
                 }
+                Text("Finder Cut also needs Input Monitoring (Privacy & Security). After changing permissions, quit and reopen Polished.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent("Version", value: appVersion)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 480)
+        .frame(width: 420, height: 520)
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
-            axGranted = AccessibilityPermission.isGranted
+            refreshPermissionStatus()
         }
         .onDisappear {
             NSApp.setActivationPolicy(.accessory)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissionStatus()
+        }
+        .alert("Restart Polished", isPresented: $showRestartAlert) {
+            Button("Quit Polished") {
+                NSApplication.shared.terminate(nil)
+            }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("Permission changes take full effect after you quit and reopen Polished.")
+        }
+    }
+
+    private func refreshPermissionStatus() {
+        let axNow = AccessibilityPermission.isGranted
+
+        if axNow, !axGranted {
+            showRestartAlert = true
+        }
+
+        axGranted = axNow
+
+        if moduleManager.isEnabled(moduleManager.finderEnhancements) {
+            moduleManager.finderEnhancements.start()
         }
     }
 

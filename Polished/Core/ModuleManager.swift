@@ -11,16 +11,20 @@ class ModuleManager {
     static let shared = ModuleManager()
     private(set) var modules: [Module] = []
     private(set) var clipboardHistory: ClipboardHistory
+    private(set) var finderEnhancements: FinderEnhancements
     private(set) var enabledModuleIDs: Set<String> = []
     private let enabledModulesKey = "enabledModuleIDs"
 
     private init() {
         let clipboardHistory = ClipboardHistory()
+        let finderEnhancements = FinderEnhancements()
         self.clipboardHistory = clipboardHistory
+        self.finderEnhancements = finderEnhancements
         modules = [
             AppQuitter(),
             WindowSnapper(),
             clipboardHistory,
+            finderEnhancements,
         ]
         loadEnabledState()
         startEnabledModules()
@@ -36,6 +40,11 @@ class ModuleManager {
     }
 
     func startEnabledModules() {
+        let hasEnabledModule = modules.contains { isEnabled($0) }
+        if hasEnabledModule {
+            AccessibilityPermission.requestIfNeeded()
+        }
+
         for module in modules where isEnabled(module) {
             module.isEnabled = true
             module.start()
@@ -58,6 +67,7 @@ class ModuleManager {
 
         module.isEnabled = enabled
         if enabled {
+            AccessibilityPermission.requestIfNeeded()
             module.start()
         } else {
             module.stop()

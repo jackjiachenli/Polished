@@ -10,10 +10,6 @@ struct PolishedApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Bindable private var moduleManager = ModuleManager.shared
 
-    init() {
-        AccessibilityPermission.requestIfNeeded()
-    }
-
     var body: some Scene {
         // Establishes window context for LSUIElement apps (required before other scenes on macOS 26)
         Window("Hidden", id: "hidden-context") {
