@@ -26,7 +26,11 @@ final class WindowSwitcher: Module {
 
     var includeMinimized: Bool {
         didSet {
+            guard includeMinimized != oldValue else { return }
             UserDefaults.standard.set(includeMinimized, forKey: Self.includeMinimizedKey)
+            if isEnabled {
+                refreshSwitchableWindows()
+            }
         }
     }
 
