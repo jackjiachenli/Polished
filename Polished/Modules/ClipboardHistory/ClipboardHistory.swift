@@ -9,6 +9,7 @@
 
 import AppKit
 import ApplicationServices
+import Carbon
 import Observation
 
 // MARK: - Clipboard item model
@@ -140,11 +141,16 @@ final class ClipboardHistory: Module {
         "com.dashlane.dashlanephonefinal",
     ]
 
+    private static let pollIntervalIdle: TimeInterval = 1.0
+    private static let pollIntervalActive: TimeInterval = 0.1
+    private static let activePollBurstCount = 15
+
     private var pollTimer: Timer?
     private var lastChangeCount = 0
+    private var activePollsRemaining = 0
     private var isInternalWrite = false
     private var globalHotkey: GlobalHotkey?
-    private let pickerPanel = ClipboardPickerPanel()
+    private var pickerPanel: ClipboardPickerPanel?
     private var saveWorkItem: DispatchWorkItem?
 
     init() {
@@ -154,11 +160,6 @@ final class ClipboardHistory: Module {
         useGlobalHotkey = UserDefaults.standard.object(forKey: Self.useGlobalHotkeyKey) as? Bool ?? true
         persistHistory = UserDefaults.standard.object(forKey: Self.persistHistoryKey) as? Bool ?? true
         hotkeyBinding = Self.loadHotkeyBinding()
-
-        if persistHistory {
-            items = ClipboardHistoryStore.load()
-            trimToMaxItems()
-        }
     }
 
     func start() {
@@ -168,21 +169,29 @@ final class ClipboardHistory: Module {
         }
         guard pollTimer == nil else { return }
 
+        loadPersistedHistoryIfNeeded()
         lastChangeCount = NSPasteboard.general.changeCount
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.pollPasteboard()
-        }
+        activePollsRemaining = 0
+        pollPasteboard()
         updateHotkeyRegistration()
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        activePollsRemaining = 0
         globalHotkey?.unregister()
         globalHotkey = nil
-        if pickerPanel.isVisible {
-            pickerPanel.dismiss()
-        }
+        pickerPanel?.dismiss()
+        pickerPanel = nil
+        items.removeAll()
+        selectedItemID = nil
+    }
+
+    private func loadPersistedHistoryIfNeeded() {
+        guard persistHistory, items.isEmpty else { return }
+        items = ClipboardHistoryStore.load()
+        trimToMaxItems()
     }
 
     func clearHistory() {
@@ -214,10 +223,13 @@ final class ClipboardHistory: Module {
     }
 
     func togglePicker() {
-        if pickerPanel.isVisible {
-            pickerPanel.dismiss()
+        let panel = pickerPanel ?? ClipboardPickerPanel()
+        pickerPanel = panel
+        if panel.isVisible {
+            panel.dismiss()
         } else {
-            pickerPanel.show(history: self)
+            pollPasteboard()
+            panel.show(history: self)
         }
     }
 
@@ -232,10 +244,10 @@ final class ClipboardHistory: Module {
         selectedItemID = items[next].id
     }
 
-    func pasteSelectedPickerItem() {
+    func pasteSelectedPickerItem(activating target: NSRunningApplication? = nil) {
         guard let id = selectedItemID,
               let item = items.first(where: { $0.id == id }) else { return }
-        paste(item)
+        paste(item, activating: target)
     }
 
     private func clampSelection() {
@@ -248,15 +260,31 @@ final class ClipboardHistory: Module {
         }
     }
 
-    func paste(_ item: ClipboardItem) {
+    func paste(_ item: ClipboardItem, activating target: NSRunningApplication? = nil) {
         guard AXIsProcessTrusted() else { return }
 
         isInternalWrite = true
         writeToPasteboard(item.content)
         lastChangeCount = NSPasteboard.general.changeCount
-        simulateCommandV()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if let target {
+                target.activate(options: [.activateIgnoringOtherApps])
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                KeySimulation.postCommandKey(CGKeyCode(kVK_ANSI_V))
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.isInternalWrite = false
+        }
+    }
+
+    func copyToPasteboard(_ item: ClipboardItem) {
+        isInternalWrite = true
+        writeToPasteboard(item.content)
+        lastChangeCount = NSPasteboard.general.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.isInternalWrite = false
         }
     }
@@ -300,8 +328,13 @@ final class ClipboardHistory: Module {
     // MARK: - Pasteboard polling
 
     private func pollPasteboard() {
+        var pasteboardChanged = false
+        defer { scheduleNextPoll(afterChange: pasteboardChanged) }
+
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount != lastChangeCount else { return }
+
+        pasteboardChanged = true
         lastChangeCount = pasteboard.changeCount
         guard !isInternalWrite else { return }
 
@@ -314,40 +347,56 @@ final class ClipboardHistory: Module {
         scheduleSave()
     }
 
+    private func scheduleNextPoll(afterChange: Bool) {
+        pollTimer?.invalidate()
+        if afterChange {
+            activePollsRemaining = Self.activePollBurstCount
+        } else if activePollsRemaining > 0 {
+            activePollsRemaining -= 1
+        }
+
+        let interval = activePollsRemaining > 0 ? Self.pollIntervalActive : Self.pollIntervalIdle
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            self?.pollPasteboard()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
     private func shouldIgnoreCapture(from pasteboard: NSPasteboard) -> Bool {
         let types = Set(pasteboard.types ?? [])
+        let hasConcealed = types.contains(Self.concealedType)
+        let hasTransient = types.contains(Self.transientType)
+        let hasSensitiveMarkers = hasConcealed || hasTransient
+        let fromSensitiveApp = isSensitiveFrontmostApp()
 
-        if types.contains(Self.transientType) {
+        // Password managers mark copies with Concealed/Transient; also block while that app is frontmost.
+        if ignoreSensitiveApps, fromSensitiveApp || hasSensitiveMarkers {
             return true
         }
 
-        if ignoreConcealed, types.contains(Self.concealedType) {
-            return true
-        }
-
-        if ignoreSensitiveApps,
-           let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-           Self.sensitiveBundleIDs.contains(bundleID) {
+        if ignoreConcealed, hasSensitiveMarkers {
             return true
         }
 
         return false
     }
 
+    private func isSensitiveFrontmostApp() -> Bool {
+        guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return false
+        }
+        return Self.sensitiveBundleIDs.contains(bundleID)
+    }
+
     private func readContent(from pasteboard: NSPasteboard) -> ClipboardContent? {
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
-            .urlReadingFileURLsOnly: true,
-        ]) as? [URL], !urls.isEmpty {
-            return .fileURLs(urls)
+        let fileURLs = PasteboardFileURLs.fileURLs(from: pasteboard)
+        if !fileURLs.isEmpty {
+            return .fileURLs(fileURLs)
         }
 
-        if let image = NSImage(pasteboard: pasteboard),
-           let tiff = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
-            let width = max(Int(bitmap.pixelsWide), 1)
-            let height = max(Int(bitmap.pixelsHigh), 1)
-            return .image(png, width: width, height: height)
+        if let image = ClipboardImageStorage.content(from: pasteboard) {
+            return .image(image.data, width: image.width, height: image.height)
         }
 
         if let string = pasteboard.string(forType: .string)?
@@ -391,26 +440,18 @@ final class ClipboardHistory: Module {
         case .text(let string):
             pasteboard.setString(string, forType: .string)
         case .image(let data, _, _):
-            if let image = NSImage(data: data) {
-                pasteboard.writeObjects([image])
+            if !ClipboardImageStorage.write(data: data, to: pasteboard) {
+                print("ClipboardHistory: Failed to write image to pasteboard")
             }
         case .fileURLs(let urls):
-            pasteboard.writeObjects(urls as [NSURL])
+            let items = urls.map { url -> NSPasteboardItem in
+                let item = NSPasteboardItem()
+                item.setString(url.path, forType: .fileURL)
+                item.setString(url.absoluteString, forType: NSPasteboard.PasteboardType("public.file-url"))
+                return item
+            }
+            pasteboard.writeObjects(items)
         }
     }
 
-    private func simulateCommandV() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let keyCode: CGKeyCode = 9 // kVK_ANSI_V
-
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
-            return
-        }
-
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-    }
 }
