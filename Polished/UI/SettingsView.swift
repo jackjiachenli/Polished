@@ -14,6 +14,7 @@ struct SettingsView: View {
     private static let moduleDescriptions: [String: String] = [
         "app-quitter": "Quits apps when their last window is closed",
         "window-snapper": "Snaps windows to screen edges and corners when dragged",
+        "window-switcher": "Switch windows with a hold-to-cycle overlay (⌥Tab)",
         "clipboard-history": "Keeps a history of copied text, images, and files",
         "finder-enhancements": "Explorer-like improvements for Finder",
     ]
@@ -78,6 +79,23 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("Opens a floating picker with \(moduleManager.clipboardHistory.hotkeyDisplayString). Uses Accessibility to simulate ⌘V when you paste a selected item. No Input Monitoring required.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if moduleManager.isEnabled(moduleManager.windowSwitcher) {
+                Section("Window Switcher") {
+                    LabeledContent("Shortcut") {
+                        HotkeyRecorder(binding: Binding(
+                            get: { moduleManager.windowSwitcher.hotkeyBinding },
+                            set: { moduleManager.windowSwitcher.hotkeyBinding = $0 }
+                        ))
+                    }
+                    Toggle("Include minimized windows", isOn: Binding(
+                        get: { moduleManager.windowSwitcher.includeMinimized },
+                        set: { moduleManager.windowSwitcher.includeMinimized = $0 }
+                    ))
+                    Text("Hold \(moduleManager.windowSwitcher.hotkeyDisplayString) to cycle windows (overlay coming in a later update). Requires Accessibility; thumbnails will also need Screen Recording.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

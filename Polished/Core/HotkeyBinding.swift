@@ -15,6 +15,11 @@ struct HotkeyBinding: Equatable, Codable {
         carbonModifiers: UInt32(cmdKey | shiftKey)
     )
 
+    static let windowSwitcherDefault = HotkeyBinding(
+        keyCode: UInt32(kVK_Tab),
+        carbonModifiers: UInt32(optionKey)
+    )
+
     var displayString: String {
         var parts: [String] = []
         if carbonModifiers & UInt32(controlKey) != 0 { parts.append("⌃") }

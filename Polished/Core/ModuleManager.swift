@@ -12,17 +12,21 @@ class ModuleManager {
     private(set) var modules: [Module] = []
     private(set) var clipboardHistory: ClipboardHistory
     private(set) var finderEnhancements: FinderEnhancements
+    private(set) var windowSwitcher: WindowSwitcher
     private(set) var enabledModuleIDs: Set<String> = []
     private let enabledModulesKey = "enabledModuleIDs"
 
     private init() {
         let clipboardHistory = ClipboardHistory()
         let finderEnhancements = FinderEnhancements()
+        let windowSwitcher = WindowSwitcher()
         self.clipboardHistory = clipboardHistory
         self.finderEnhancements = finderEnhancements
+        self.windowSwitcher = windowSwitcher
         modules = [
             AppQuitter(),
             WindowSnapper(),
+            windowSwitcher,
             clipboardHistory,
             finderEnhancements,
         ]
