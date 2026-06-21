@@ -9,7 +9,11 @@ A suite of macOS utilities that fix the small things Windows switchers miss.
 - **Clipboard History** — clipboard history with global hotkey (default ⌘⇧V)
 - **Finder Enhancements** — Explorer-like improvements for Finder (cut to move files)
 
-Built with Swift and AppKit. Requires Accessibility permission. Free and open source.
+Built with Swift and AppKit. Requires Accessibility permission. Licensed under the [MIT License](LICENSE).
+
+## Acknowledgments
+
+- **Window Snapper** — snap area detection and frame math adapted from [Rectangle](https://github.com/rxhanson/Rectangle) (MIT), which is based on Spectacle. See [NOTICE](NOTICE).
 
 ## Project layout
 

@@ -4,6 +4,9 @@
 //
 // Drag-to-edge/corner snap via CGEvent tap; requires Accessibility.
 //
+// Snap detection and frame calculations are adapted from Rectangle (MIT):
+// https://github.com/rxhanson/Rectangle — see NOTICE at the repository root.
+//
 
 import AppKit
 import ApplicationServices
