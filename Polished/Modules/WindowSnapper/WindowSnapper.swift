@@ -57,6 +57,20 @@ private final class SnapHistory {
         }
     }
 
+    func removeWindow(_ windowID: CGWindowID) {
+        lastSnapRects.removeValue(forKey: windowID)
+        restoreRects.removeValue(forKey: windowID)
+    }
+
+    func pruneStaleEntries(visibleWindowIDs: Set<CGWindowID>) {
+        for windowID in lastSnapRects.keys where !visibleWindowIDs.contains(windowID) {
+            lastSnapRects.removeValue(forKey: windowID)
+        }
+        for windowID in restoreRects.keys where !visibleWindowIDs.contains(windowID) {
+            restoreRects.removeValue(forKey: windowID)
+        }
+    }
+
     private func rectsMatch(_ a: CGRect, _ b: CGRect) -> Bool {
         let tolerance: CGFloat = 4
         return abs(a.origin.x - b.origin.x) < tolerance
@@ -687,6 +701,19 @@ private enum WindowAX {
         return windowIDFromWindowList(for: window)
     }
 
+    static func onScreenWindowIDs() -> Set<CGWindowID> {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        var ids = Set<CGWindowID>()
+        for entry in list {
+            if let id = entry[kCGWindowNumber as String] as? CGWindowID {
+                ids.insert(id)
+            }
+        }
+        return ids
+    }
+
     private static func windowIDFromWindowList(for window: AXUIElement) -> CGWindowID? {
         guard let frame = frame(of: window) else { return nil }
         var pid: pid_t = 0
@@ -751,7 +778,6 @@ private enum WindowAX {
     static func setFrame(_ cocoaFrame: CGRect, on window: AXUIElement) {
         let quartz = ScreenCoordinates.cocoaRectToQuartz(cocoaFrame)
         setQuartzPoint(quartz.origin, on: window)
-        setQuartzSize(quartz.size, on: window)
         setQuartzSize(quartz.size, on: window)
     }
 
@@ -826,10 +852,14 @@ final class WindowSnapper: Module {
     private var windowCaptureAttempts = 0
     private var lastWindowCaptureTimestamp: TimeInterval?
     private var snappingDisabled = false
+    private var dragDispatchScheduled = false
+    private var pendingDragLocation: NSPoint?
+    private var dragEndCount = 0
 
     private let dragThreshold: CGFloat = 5
     private let maxWindowCaptureAttempts = 20
     private let windowCaptureRetryInterval: TimeInterval = 0.1
+    private let snapPruneInterval = 10
 
     func start() {
         guard AXIsProcessTrusted() else {
@@ -898,12 +928,31 @@ final class WindowSnapper: Module {
         snappingDisabled = WindowAX.frontWindowIsFullScreen()
     }
 
-    fileprivate func handleEvent(type: CGEventType) {
-        let location = NSEvent.mouseLocation
+    fileprivate func enqueueEvent(type: CGEventType, at location: NSPoint) {
+        switch type {
+        case .leftMouseDown, .leftMouseUp:
+            dragDispatchScheduled = false
+            pendingDragLocation = nil
+            handleEvent(type: type, at: location)
+        case .leftMouseDragged:
+            pendingDragLocation = location
+            guard !dragDispatchScheduled else { return }
+            dragDispatchScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.dragDispatchScheduled = false
+                guard let location = self.pendingDragLocation else { return }
+                self.pendingDragLocation = nil
+                self.handleEvent(type: .leftMouseDragged, at: location)
+            }
+        default:
+            break
+        }
+    }
 
+    fileprivate func handleEvent(type: CGEventType, at location: NSPoint) {
         switch type {
         case .leftMouseDown:
-            updateFullScreenState()
             onMouseDown(at: location)
         case .leftMouseDragged:
             onMouseDragged(at: location)
@@ -928,11 +977,15 @@ final class WindowSnapper: Module {
         capturedWindow = WindowAX.windowBeingDragged(at: point)
         if let window = capturedWindow {
             capturedWindowID = WindowAX.windowID(of: window)
-            var pid: pid_t = 0
-            if AXUIElementGetPid(window, &pid) == .success {
-                capturedAppPID = pid
+            if capturedWindowID == nil {
+                capturedWindow = nil
+            } else {
+                var pid: pid_t = 0
+                if AXUIElementGetPid(window, &pid) == .success {
+                    capturedAppPID = pid
+                }
+                initialWindowRect = WindowAX.frame(of: window)
             }
-            initialWindowRect = WindowAX.frame(of: window)
         }
     }
 
@@ -959,6 +1012,8 @@ final class WindowSnapper: Module {
 
         if !isDragging {
             guard hypot(point.x - origin.x, point.y - origin.y) >= dragThreshold else { return }
+            updateFullScreenState()
+            guard !snappingDisabled else { return }
             isDragging = true
         }
 
@@ -1080,6 +1135,10 @@ final class WindowSnapper: Module {
     }
 
     private func resetDragSession() {
+        dragEndCount += 1
+        if dragEndCount.isMultiple(of: snapPruneInterval) {
+            snapHistory.pruneStaleEntries(visibleWindowIDs: WindowAX.onScreenWindowIDs())
+        }
         capturedWindow = nil
         capturedWindowID = nil
         capturedAppPID = nil
@@ -1125,8 +1184,9 @@ private func windowSnapperEventCallback(
     }
 
     let snapper = Unmanaged<WindowSnapper>.fromOpaque(refcon).takeUnretainedValue()
+    let location = NSEvent.mouseLocation
     DispatchQueue.main.async {
-        snapper.handleEvent(type: type)
+        snapper.enqueueEvent(type: type, at: location)
     }
     return Unmanaged.passUnretained(event)
 }

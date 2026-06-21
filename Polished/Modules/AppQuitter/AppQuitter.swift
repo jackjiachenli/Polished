@@ -51,9 +51,20 @@ final class AppQuitter: Module {
             self?.stopMonitoring(pid: app.processIdentifier)
         })
 
-        for app in NSWorkspace.shared.runningApplications {
+        for app in NSWorkspace.shared.runningApplications where appHasVisibleUserWindow(app) {
             startMonitoring(app)
         }
+    }
+
+    private func appHasVisibleUserWindow(_ app: NSRunningApplication) -> Bool {
+        guard shouldMonitor(app) else { return false }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var windowList: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+              let windows = windowList as? [AXUIElement] else {
+            return false
+        }
+        return windows.contains { isVisibleUserWindow($0) }
     }
 
     func stop() {
