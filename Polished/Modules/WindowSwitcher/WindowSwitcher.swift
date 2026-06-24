@@ -2,7 +2,7 @@
 //  WindowSwitcher.swift
 //  Polished
 //
-// Alt+Tab-style window switcher (overlay and event tap in later phases).
+// Alt+Tab-style window switcher with hold-to-cycle overlay.
 //
 
 import AppKit
@@ -19,6 +19,7 @@ final class WindowSwitcher: Module {
         didSet {
             guard hotkeyBinding != oldValue else { return }
             saveHotkeyBinding()
+            eventTap?.updateBinding(hotkeyBinding)
         }
     }
 
@@ -30,13 +31,20 @@ final class WindowSwitcher: Module {
             UserDefaults.standard.set(includeMinimized, forKey: Self.includeMinimizedKey)
             if isEnabled {
                 refreshSwitchableWindows()
+                if isOverlayOpen {
+                    overlayPanel.update(windows: switchableWindows, selectedIndex: selectedIndex)
+                }
             }
         }
     }
 
     private(set) var switchableWindows: [SwitchableWindow] = []
+    private(set) var isOverlayOpen = false
+    private(set) var selectedIndex = 0
 
     private let mru = WindowMRU()
+    private let overlayPanel = SwitcherOverlayPanel()
+    private var eventTap: SwitcherEventTap?
     private var workspaceObservers: [NSObjectProtocol] = []
 
     init() {
@@ -54,9 +62,18 @@ final class WindowSwitcher: Module {
         registerWorkspaceObservers()
         refreshSwitchableWindows()
         recordFocusedWindow()
+
+        let tap = SwitcherEventTap(binding: hotkeyBinding)
+        tap.delegate = self
+        tap.start()
+        eventTap = tap
     }
 
     func stop() {
+        dismissOverlay()
+        eventTap?.stop()
+        eventTap = nil
+
         for observer in workspaceObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -92,10 +109,12 @@ final class WindowSwitcher: Module {
             queue: .main
         ) { [weak self] _ in
             self?.refreshSwitchableWindows()
+            self?.handleWindowsChangedWhileOverlayOpen()
         })
     }
 
     private func handleApplicationActivated() {
+        guard !isOverlayOpen else { return }
         mru.scheduleFocusUpdate { [weak self] in
             self?.recordFocusedWindow()
             self?.refreshSwitchableWindows()
@@ -105,11 +124,64 @@ final class WindowSwitcher: Module {
     private func recordFocusedWindow() {
         guard let app = WindowAccessibility.frontmostRegularApplication() else { return }
         guard let window = WindowAccessibility.focusedWindow(in: app),
-              WindowAccessibility.isStandardWindow(window),
-              !WindowAccessibility.isFullScreen(window) else { return }
+              WindowAccessibility.isStandardWindow(window) else { return }
         guard let windowID = WindowAccessibility.windowID(of: window) else { return }
         mru.recordFocus(windowID: windowID)
         PolishedLog.debug("WindowSwitcher: MRU focus recorded for window \(windowID)")
+    }
+
+    private func openOverlay() {
+        refreshSwitchableWindows()
+        guard !switchableWindows.isEmpty else { return }
+
+        selectedIndex = switchableWindows.count > 1 ? 1 : 0
+        isOverlayOpen = true
+        overlayPanel.show(windows: switchableWindows, selectedIndex: selectedIndex)
+        PolishedLog.debug("WindowSwitcher: Overlay opened with \(switchableWindows.count) window(s)")
+    }
+
+    private func advanceSelection() {
+        guard isOverlayOpen, !switchableWindows.isEmpty else { return }
+        selectedIndex = (selectedIndex + 1) % switchableWindows.count
+        overlayPanel.update(windows: switchableWindows, selectedIndex: selectedIndex)
+    }
+
+    private func confirmSelection() {
+        guard isOverlayOpen else { return }
+        let index = min(selectedIndex, switchableWindows.count - 1)
+        guard switchableWindows.indices.contains(index) else {
+            dismissOverlay()
+            return
+        }
+
+        let window = switchableWindows[index]
+        isOverlayOpen = false
+        overlayPanel.dismiss()
+
+        WindowFocus.raise(window)
+        mru.recordFocus(windowID: window.windowID)
+        refreshSwitchableWindows()
+        PolishedLog.debug("WindowSwitcher: Confirmed switch to window \(window.windowID)")
+    }
+
+    private func dismissOverlay() {
+        guard isOverlayOpen else { return }
+        isOverlayOpen = false
+        overlayPanel.dismiss()
+        PolishedLog.debug("WindowSwitcher: Overlay dismissed")
+    }
+
+    private func handleWindowsChangedWhileOverlayOpen() {
+        guard isOverlayOpen else { return }
+        refreshSwitchableWindows()
+        guard !switchableWindows.isEmpty else {
+            dismissOverlay()
+            return
+        }
+        if selectedIndex >= switchableWindows.count {
+            selectedIndex = switchableWindows.count > 1 ? 1 : 0
+        }
+        overlayPanel.update(windows: switchableWindows, selectedIndex: selectedIndex)
     }
 
     private static let hotkeyBindingKey = "windowSwitcherHotkeyBinding"
@@ -127,5 +199,25 @@ final class WindowSwitcher: Module {
     private func saveHotkeyBinding() {
         guard let data = try? JSONEncoder().encode(hotkeyBinding) else { return }
         UserDefaults.standard.set(data, forKey: Self.hotkeyBindingKey)
+    }
+}
+
+extension WindowSwitcher: SwitcherEventTapDelegate {
+    var isSwitcherOverlayOpen: Bool { isOverlayOpen }
+
+    func switcherEventTapDidOpenOverlay() {
+        openOverlay()
+    }
+
+    func switcherEventTapDidAdvanceSelection() {
+        advanceSelection()
+    }
+
+    func switcherEventTapDidConfirmSelection() {
+        confirmSelection()
+    }
+
+    func switcherEventTapDidCancel() {
+        dismissOverlay()
     }
 }

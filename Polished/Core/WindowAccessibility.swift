@@ -98,6 +98,15 @@ enum WindowAccessibility {
         return false
     }
 
+    static func isHidden(_ window: AXUIElement) -> Bool {
+        var hidden: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXHiddenAttribute as CFString, &hidden) == .success,
+           (hidden as? Bool) == true {
+            return true
+        }
+        return false
+    }
+
     static func hasSettableFrame(_ window: AXUIElement) -> Bool {
         isSettable(window, kAXPositionAttribute as CFString)
             && isSettable(window, kAXSizeAttribute as CFString)
@@ -124,7 +133,85 @@ enum WindowAccessibility {
         if _AXUIElementGetWindow(window, &wid) == .success, wid != 0 {
             return wid
         }
-        return windowIDFromWindowList(for: window)
+        if let id = windowIDFromWindowList(for: window, onScreenOnly: true) {
+            return id
+        }
+        return windowIDFromWindowList(for: window, onScreenOnly: false)
+    }
+
+    static func axWindow(forWindowID targetWindowID: CGWindowID, pid: pid_t, title: String? = nil) -> AXUIElement? {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              !app.isTerminated else { return nil }
+
+        var titleMatch: AXUIElement?
+        for window in windows(of: app) {
+            guard isStandardWindow(window) else { continue }
+            if let id = windowID(of: window), id == targetWindowID {
+                return window
+            }
+            if titleMatch == nil,
+               let title, !title.isEmpty,
+               self.title(of: window) == title {
+                titleMatch = window
+            }
+        }
+        return titleMatch
+    }
+
+    static func axWindow(matchingTitle title: String, pid: pid_t) -> AXUIElement? {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              !app.isTerminated else { return nil }
+
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var fallback: AXUIElement?
+
+        for window in windows(of: app) {
+            guard isStandardWindow(window) else { continue }
+            let windowTitle = self.title(of: window)
+            if !trimmed.isEmpty, windowTitle == trimmed {
+                return window
+            }
+            if fallback == nil, !windowTitle.isEmpty {
+                fallback = window
+            }
+        }
+
+        return fallback
+    }
+
+    static func screenForSwitcherOverlay() -> NSScreen {
+        if let fullscreenScreen = screenForFrontmostFullScreenWindow() {
+            return fullscreenScreen
+        }
+
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
+            return screen
+        }
+
+        if let app = frontmostRegularApplication(excludingOwnApp: true),
+           let window = focusedWindow(in: app),
+           let frame = frame(of: window) {
+            let center = NSPoint(x: frame.midX, y: frame.midY)
+            if let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+                return screen
+            }
+        }
+
+        return NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    private static func screenForFrontmostFullScreenWindow() -> NSScreen? {
+        guard let app = frontmostRegularApplication(excludingOwnApp: true),
+              let window = focusedWindow(in: app),
+              isFullScreen(window),
+              let frame = frame(of: window) else { return nil }
+
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        return NSScreen.screens.first { $0.frame.contains(center) }
+            ?? NSScreen.screens.first { screen in
+                screen.frame.intersects(frame)
+            }
     }
 
     static func onScreenWindowIDs() -> Set<CGWindowID> {
@@ -183,28 +270,46 @@ enum WindowAccessibility {
         setQuartzSize(quartz.size, on: window)
     }
 
-    private static func windowIDFromWindowList(for window: AXUIElement) -> CGWindowID? {
-        guard let frame = frame(of: window) else { return nil }
+    private static func windowIDFromWindowList(for window: AXUIElement, onScreenOnly: Bool) -> CGWindowID? {
         var pid: pid_t = 0
         guard AXUIElementGetPid(window, &pid) == .success else { return nil }
 
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let options: CGWindowListOption = onScreenOnly
+            ? [.optionOnScreenOnly, .excludeDesktopElements]
+            : [.optionAll, .excludeDesktopElements]
+        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
 
+        let axFrame = frame(of: window)
+        let axTitle = title(of: window)
+
+        var titleMatches: [CGWindowID] = []
         for info in list {
             guard let infoPID = info[kCGWindowOwnerPID as String] as? pid_t, infoPID == pid,
-                  let windowNumber = info[kCGWindowNumber as String] as? CGWindowID,
-                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = bounds["X"], let y = bounds["Y"],
-                  let w = bounds["Width"], let h = bounds["Height"] else { continue }
+                  let windowNumber = info[kCGWindowNumber as String] as? CGWindowID else { continue }
 
-            let primaryMaxY = ScreenCoordinates.primaryMaxY
-            let cocoaFrame = CGRect(x: x, y: primaryMaxY - y - h, width: w, height: h)
-            if framesApproxEqual(cocoaFrame, frame) {
-                return windowNumber
+            if let layer = info[kCGWindowLayer as String] as? Int, layer != 0 { continue }
+
+            if let axFrame,
+               let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+               let x = bounds["X"], let y = bounds["Y"],
+               let w = bounds["Width"], let h = bounds["Height"] {
+                let primaryMaxY = ScreenCoordinates.primaryMaxY
+                let cocoaFrame = CGRect(x: x, y: primaryMaxY - y - h, width: w, height: h)
+                if framesApproxEqual(cocoaFrame, axFrame) {
+                    return windowNumber
+                }
+            }
+
+            if !axTitle.isEmpty,
+               let listTitle = info[kCGWindowName as String] as? String,
+               listTitle == axTitle {
+                titleMatches.append(windowNumber)
             }
         }
-        return nil
+
+        return titleMatches.count == 1 ? titleMatches[0] : nil
     }
 
     private static func framesApproxEqual(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 4) -> Bool {

@@ -12,7 +12,10 @@ struct SwitchableWindow: Identifiable, Equatable, Hashable {
     let appName: String
     let bundleIdentifier: String?
     let isMinimized: Bool
+    let isFullScreen: Bool
     let icon: NSImage?
+    /// Used to pick the primary window when duplicates appear (e.g. Electron fullscreen artifacts).
+    let area: CGFloat
 
     var id: CGWindowID { windowID }
 
