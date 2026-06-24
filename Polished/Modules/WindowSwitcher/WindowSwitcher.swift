@@ -50,6 +50,13 @@ final class WindowSwitcher: Module {
     init() {
         hotkeyBinding = Self.loadHotkeyBinding()
         includeMinimized = UserDefaults.standard.object(forKey: Self.includeMinimizedKey) as? Bool ?? true
+
+        overlayPanel.onSelectWindow = { [weak self] index in
+            self?.selectWindow(at: index)
+        }
+        overlayPanel.onHighlightWindow = { [weak self] index in
+            self?.highlightSelection(at: index)
+        }
     }
 
     func start() {
@@ -144,6 +151,19 @@ final class WindowSwitcher: Module {
         guard isOverlayOpen, !switchableWindows.isEmpty else { return }
         selectedIndex = (selectedIndex + 1) % switchableWindows.count
         overlayPanel.update(windows: switchableWindows, selectedIndex: selectedIndex)
+    }
+
+    private func highlightSelection(at index: Int) {
+        guard isOverlayOpen, switchableWindows.indices.contains(index) else { return }
+        guard selectedIndex != index else { return }
+        selectedIndex = index
+        overlayPanel.update(windows: switchableWindows, selectedIndex: selectedIndex)
+    }
+
+    private func selectWindow(at index: Int) {
+        guard isOverlayOpen, switchableWindows.indices.contains(index) else { return }
+        selectedIndex = index
+        confirmSelection()
     }
 
     private func confirmSelection() {

@@ -40,6 +40,8 @@ enum SwitcherOverlayLayout {
 final class SwitcherOverlayPanel {
     private var panel: SwitcherFloatingPanel?
     private var hostingView: NSHostingView<SwitcherOverlayView>?
+    var onSelectWindow: ((Int) -> Void)?
+    var onHighlightWindow: ((Int) -> Void)?
 
     func show(windows: [SwitchableWindow], selectedIndex: Int) {
         updateContent(windows: windows, selectedIndex: selectedIndex)
@@ -61,7 +63,12 @@ final class SwitcherOverlayPanel {
 
     private func updateContent(windows: [SwitchableWindow], selectedIndex: Int) {
         let screen = WindowAccessibility.screenForSwitcherOverlay()
-        let content = SwitcherOverlayView(windows: windows, selectedIndex: selectedIndex)
+        let content = SwitcherOverlayView(
+            windows: windows,
+            selectedIndex: selectedIndex,
+            onSelect: { [weak self] index in self?.onSelectWindow?(index) },
+            onHighlight: { [weak self] index in self?.onHighlightWindow?(index) }
+        )
 
         if panel == nil {
             panel = SwitcherFloatingPanel()
@@ -111,7 +118,7 @@ private final class SwitcherFloatingPanel: NSPanel {
         hasShadow = false
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        ignoresMouseEvents = true
+        ignoresMouseEvents = false
     }
 
     override var canBecomeKey: Bool { false }
@@ -121,6 +128,8 @@ private final class SwitcherFloatingPanel: NSPanel {
 private struct SwitcherOverlayView: View {
     let windows: [SwitchableWindow]
     let selectedIndex: Int
+    let onSelect: (Int) -> Void
+    let onHighlight: (Int) -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -129,7 +138,9 @@ private struct SwitcherOverlayView: View {
                     ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                         SwitcherWindowCard(
                             window: window,
-                            isSelected: index == selectedIndex
+                            isSelected: index == selectedIndex,
+                            onSelect: { onSelect(index) },
+                            onHighlight: { onHighlight(index) }
                         )
                         .id(window.id)
                     }
@@ -167,6 +178,10 @@ private struct SwitcherOverlayView: View {
 private struct SwitcherWindowCard: View {
     let window: SwitchableWindow
     let isSelected: Bool
+    let onSelect: () -> Void
+    let onHighlight: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -178,14 +193,26 @@ private struct SwitcherWindowCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: SwitcherOverlayLayout.cardCornerRadius, style: .continuous)
                 .strokeBorder(
-                    isSelected ? Color.accentColor : Color.white.opacity(0.12),
+                    isSelected ? Color.accentColor : Color.white.opacity(isHovered ? 0.28 : 0.12),
                     lineWidth: isSelected ? 2.5 : 1
                 )
         }
         .shadow(color: isSelected ? Color.accentColor.opacity(0.35) : .clear, radius: 10, y: 2)
-        .scaleEffect(isSelected ? SwitcherOverlayLayout.selectedScale : 1)
+        .scaleEffect(isSelected ? SwitcherOverlayLayout.selectedScale : (isHovered ? 1.02 : 1))
         .animation(.spring(response: 0.22, dampingFraction: 0.82), value: isSelected)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .zIndex(isSelected ? 1 : 0)
+        .contentShape(RoundedRectangle(cornerRadius: SwitcherOverlayLayout.cardCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                onHighlight()
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 
     private var previewArea: some View {

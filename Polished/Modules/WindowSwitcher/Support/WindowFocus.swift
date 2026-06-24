@@ -7,30 +7,74 @@ import AppKit
 import ApplicationServices
 
 enum WindowFocus {
+    private static let fullScreenRetryDelay: TimeInterval = 0.15
+    private static let standardRetryDelay: TimeInterval = 0.05
+    private static let maxAttempts = 4
+
     @discardableResult
     static func raise(_ window: SwitchableWindow) -> Bool {
         guard AXIsProcessTrusted() else { return false }
         guard let app = NSRunningApplication(processIdentifier: window.pid),
               !app.isTerminated else { return false }
-        guard let axWindow = WindowAccessibility.axWindow(
+
+        app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+
+        let delay = window.isFullScreen ? fullScreenRetryDelay : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            raiseResolved(window: window, app: app, attempt: 0)
+        }
+        return true
+    }
+
+    private static func raiseResolved(
+        window: SwitchableWindow,
+        app: NSRunningApplication,
+        attempt: Int
+    ) {
+        guard !app.isTerminated else { return }
+
+        if let axWindow = resolveAXWindow(for: window) {
+            if WindowAccessibility.isMinimized(axWindow) {
+                AXUIElementSetAttributeValue(axWindow, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            }
+            let axApp = AXUIElementCreateApplication(window.pid)
+            applyFocus(app: app, axApp: axApp, axWindow: axWindow, window: window, attempt: 0)
+            return
+        }
+
+        guard attempt < maxAttempts else {
+            PolishedLog.debug("WindowFocus: Could not resolve AX window for \(window.windowID) after retries")
+            return
+        }
+
+        let delay = window.isFullScreen ? fullScreenRetryDelay : standardRetryDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            raiseResolved(window: window, app: app, attempt: attempt + 1)
+        }
+    }
+
+    private static func resolveAXWindow(for window: SwitchableWindow) -> AXUIElement? {
+        if window.isFullScreen, let fullScreen = WindowAccessibility.fullScreenWindow(pid: window.pid) {
+            return fullScreen
+        }
+
+        if let byID = WindowAccessibility.axWindow(
             forWindowID: window.windowID,
             pid: window.pid,
             title: window.title
-        ) ?? WindowAccessibility.axWindow(matchingTitle: window.title, pid: window.pid) else {
-            app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-            PolishedLog.debug("WindowFocus: Activated app \(window.pid) — no AX window resolved")
-            return true
+        ) {
+            if window.isFullScreen, !WindowAccessibility.isFullScreen(byID),
+               let fullScreen = WindowAccessibility.fullScreenWindow(pid: window.pid) {
+                return fullScreen
+            }
+            return byID
         }
 
-        if WindowAccessibility.isMinimized(axWindow) {
-            AXUIElementSetAttributeValue(axWindow, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        }
-
-        let axApp = AXUIElementCreateApplication(window.pid)
-        DispatchQueue.main.async {
-            applyFocus(app: app, axApp: axApp, axWindow: axWindow, window: window, attempt: 0)
-        }
-        return true
+        return WindowAccessibility.axWindow(
+            matchingTitle: window.title,
+            pid: window.pid,
+            preferFullScreen: window.isFullScreen
+        )
     }
 
     private static func applyFocus(
@@ -52,12 +96,14 @@ enum WindowFocus {
             return
         }
 
-        guard attempt < 2 else {
+        guard attempt < maxAttempts else {
             PolishedLog.debug("WindowFocus: Focus failed for window \(window.windowID) after retries")
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        let delay = window.isFullScreen ? fullScreenRetryDelay : standardRetryDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let axWindow = resolveAXWindow(for: window) ?? axWindow
             applyFocus(app: app, axApp: axApp, axWindow: axWindow, window: window, attempt: attempt + 1)
         }
     }

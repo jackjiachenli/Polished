@@ -95,7 +95,7 @@ struct SettingsView: View {
                         get: { moduleManager.windowSwitcher.includeMinimized },
                         set: { moduleManager.windowSwitcher.includeMinimized = $0 }
                     ))
-                    Text("Hold \(moduleManager.windowSwitcher.hotkeyDisplayString) to cycle windows; release the modifier to switch. Requires Accessibility and Input Monitoring. Screen Recording is optional and enables live previews in a later update.")
+                    Text("Hold \(moduleManager.windowSwitcher.hotkeyDisplayString) to cycle windows, click a card to switch, or release the modifier to confirm. Requires Accessibility and Input Monitoring.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

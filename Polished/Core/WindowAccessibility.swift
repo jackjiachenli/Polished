@@ -139,6 +139,17 @@ enum WindowAccessibility {
         return windowIDFromWindowList(for: window, onScreenOnly: false)
     }
 
+    static func fullScreenWindow(pid: pid_t) -> AXUIElement? {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              !app.isTerminated else { return nil }
+
+        for window in windows(of: app) {
+            guard isStandardWindow(window), isFullScreen(window) else { continue }
+            return window
+        }
+        return nil
+    }
+
     static func axWindow(forWindowID targetWindowID: CGWindowID, pid: pid_t, title: String? = nil) -> AXUIElement? {
         guard let app = NSRunningApplication(processIdentifier: pid),
               !app.isTerminated else { return nil }
@@ -158,9 +169,13 @@ enum WindowAccessibility {
         return titleMatch
     }
 
-    static func axWindow(matchingTitle title: String, pid: pid_t) -> AXUIElement? {
+    static func axWindow(matchingTitle title: String, pid: pid_t, preferFullScreen: Bool = false) -> AXUIElement? {
         guard let app = NSRunningApplication(processIdentifier: pid),
               !app.isTerminated else { return nil }
+
+        if preferFullScreen, let fullScreen = fullScreenWindow(pid: pid) {
+            return fullScreen
+        }
 
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         var fallback: AXUIElement?

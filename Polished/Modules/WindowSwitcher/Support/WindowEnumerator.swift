@@ -185,6 +185,9 @@ enum WindowEnumerator {
     }
 
     private static func preferredWindow(_ candidate: SwitchableWindow, over existing: SwitchableWindow) -> SwitchableWindow {
+        if candidate.isFullScreen != existing.isFullScreen {
+            return candidate.isFullScreen ? candidate : existing
+        }
         if candidate.title.isEmpty != existing.title.isEmpty {
             return candidate.title.isEmpty ? existing : candidate
         }
