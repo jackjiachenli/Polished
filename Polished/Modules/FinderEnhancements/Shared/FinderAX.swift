@@ -489,7 +489,7 @@ enum FinderAX {
         return "/" + parts.dropFirst().joined(separator: "/")
     }
 
-    static func isDirectory(_ url: URL) -> Bool {
+    nonisolated static func isDirectory(_ url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return false }
         return isDirectory.boolValue

@@ -5,6 +5,7 @@
 
 import Foundation
 
+@MainActor
 enum ClipboardHistoryStore {
     private static let directoryName = "Polished"
     private static let fileName = "clipboard-history.json"

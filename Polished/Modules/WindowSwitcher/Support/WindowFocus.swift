@@ -17,7 +17,7 @@ enum WindowFocus {
         guard let app = NSRunningApplication(processIdentifier: window.pid),
               !app.isTerminated else { return false }
 
-        app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+        app.activate(options: [.activateAllWindows])
 
         let delay = window.isFullScreen ? fullScreenRetryDelay : 0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
@@ -85,7 +85,7 @@ enum WindowFocus {
         attempt: Int
     ) {
         AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-        app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+        app.activate(options: [.activateAllWindows])
 
         AXUIElementSetAttributeValue(axWindow, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)

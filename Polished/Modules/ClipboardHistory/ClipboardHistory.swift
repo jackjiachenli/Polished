@@ -269,7 +269,7 @@ final class ClipboardHistory: Module {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if let target {
-                target.activate(options: [.activateIgnoringOtherApps])
+                target.activate()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 KeySimulation.postCommandKey(CGKeyCode(kVK_ANSI_V))

@@ -53,7 +53,7 @@ enum WindowAccessibility {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &value) == .success,
               let value else { return nil }
-        return value as! AXUIElement
+        return unsafeDowncast(value, to: AXUIElement.self)
     }
 
     static func windowAtCursor(_ point: NSPoint) -> AXUIElement? {
