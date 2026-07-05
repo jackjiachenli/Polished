@@ -21,6 +21,6 @@ First public release.
 
 - Requires macOS 26.5 or later
 - App Quitter may not quit some Electron apps (Discord, Steam)
-- Release builds are unsigned; first launch may require Gatekeeper override
+- Release builds are signed with Automatic code signing; Developer ID + notarization not yet set up for public distribution
 
 [1.0.0]: https://github.com/jackjiachenli/Polished/releases/tag/v1.0.0

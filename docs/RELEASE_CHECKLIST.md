@@ -33,4 +33,4 @@ Run before tagging a release.
 
 ## Install from DMG
 
-- [ ] Drag to Applications, launch (Gatekeeper override if unsigned)
+- [ ] Drag to Applications, launch; replacing an existing install should keep privacy permissions when the build is signed with the same identity

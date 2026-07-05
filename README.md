@@ -27,7 +27,7 @@ Built with Swift and AppKit. Licensed under the [MIT License](LICENSE).
 
 Download **Polished.dmg** from [GitHub Releases](https://github.com/jackjiachenli/Polished/releases/latest), open it, and drag **Polished** to Applications.
 
-Because v1.0 builds are not notarized, macOS Gatekeeper may block the first launch:
+Because v1.0 builds are not notarized, macOS Gatekeeper may block the first launch on other Macs:
 
 1. Right-click **Polished** in Applications → **Open**, then confirm, **or**
 2. System Settings → Privacy & Security → allow Polished to open
@@ -67,7 +67,7 @@ Check status in **Settings → Permissions**. After changing permissions in Syst
 
 - **App Quitter** works well on native macOS apps and many Chromium apps (e.g. Google Chrome). Some Electron apps (e.g. Discord, Steam) may not quit reliably when the last window closes. Contributions welcome.
 - **Window Switcher** and **Finder Cut** need Input Monitoring; if the overlay or ⌘X shortcut does nothing, enable it under Privacy & Security → Input Monitoring.
-- Unsigned release builds require the Gatekeeper steps above until a signed/notarized build is published.
+- **Developer ID / notarization** not yet set up; Gatekeeper may prompt on first launch on machines that did not build the app. DMG builds use Automatic signing so privacy permissions persist when you update by replacing the app in Applications.
 
 ## Acknowledgments
 

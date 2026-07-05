@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds a Release .app and packages dist/Polished-<version>.dmg plus dist/Polished.dmg.
+# Builds a signed Release .app and packages dist/Polished-<version>.dmg plus dist/Polished.dmg.
+#
+# Uses the Xcode project's Automatic code signing so TCC permissions (Accessibility,
+# Input Monitoring, Automation) persist when updating by replacing the app in Applications.
+# Override with CODE_SIGN_IDENTITY / CODE_SIGNING_ALLOWED env vars if needed.
 #
 # DMG layout: Polished.app on the left, Applications symlink on the right.
 # When create-dmg is installed (brew install create-dmg), uses it for icon positions
@@ -25,14 +29,20 @@ xcodebuild \
   -configuration "$CONFIG" \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$DERIVED" \
-  build \
-  CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}" \
-  CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}"
+  build
 
 APP_PATH="$DERIVED/Build/Products/${CONFIG}/${APP_NAME}.app"
 if [[ ! -d "$APP_PATH" ]]; then
   echo "error: app not found at $APP_PATH" >&2
   exit 1
+fi
+
+if ! codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
+  echo "warning: app is not signed; privacy permissions may reset on each update" >&2
+  echo "         grant signing access in Xcode or set CODE_SIGN_IDENTITY for xcodebuild" >&2
+else
+  echo "Code signature:"
+  codesign -dv "$APP_PATH" 2>&1 | grep -E 'Authority|TeamIdentifier' || true
 fi
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
