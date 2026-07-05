@@ -100,4 +100,7 @@ iOSInjectionProject/
 
 # End of https://www.toptal.com/developers/gitignore/api/swift,xcode
 
-.derivedData/
+# Local Xcode build output (project uses -derivedDataPath .derivedData-*)
+.derivedData*/
+dist/
+.cursor/

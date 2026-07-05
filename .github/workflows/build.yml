@@ -1,0 +1,16 @@
+# GitHub-hosted macos-latest runners do not yet ship Xcode 26 / macOS 26.5 SDK,
+# so this project (MACOSX_DEPLOYMENT_TARGET = 26.5) cannot compile on CI until
+# Tahoe runners are available. Run manually on a local Tahoe machine instead.
+name: Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Polished
+        run: xcodebuild -scheme Polished -configuration Debug -derivedDataPath .derivedData -destination 'platform=macOS,arch=arm64' build
