@@ -67,6 +67,7 @@ struct ClipboardPickerView: View {
         .frame(width: 420, height: 360)
         .focused($isFocused)
         .focusable()
+        .focusEffectDisabled()
         .onAppear {
             isFocused = true
             capturePasteTarget()
@@ -213,11 +214,13 @@ private struct ClipboardPickerRow: View {
             .buttonStyle(.plain)
             .help("Delete")
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
+                .fill(isSelected ? Color(nsColor: .selectedContentBackgroundColor) : Color.clear)
         }
+        .padding(.horizontal, 4)
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onTapGesture {
             onSelect()
