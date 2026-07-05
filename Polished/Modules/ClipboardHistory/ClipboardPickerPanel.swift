@@ -137,7 +137,7 @@ private final class FloatingPickerPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 360),
-            styleMask: [.nonactivatingPanel, .titled, .closable, .fullSizeContentView],
+            styleMask: [.nonactivatingPanel, .titled, .closable],
             backing: .buffered,
             defer: false
         )
@@ -145,8 +145,7 @@ private final class FloatingPickerPanel: NSPanel {
         level = .popUpMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         title = "Clipboard History"
-        titlebarAppearsTransparent = true
-        isMovableByWindowBackground = true
+        titlebarAppearsTransparent = false
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         becomesKeyOnlyIfNeeded = false
