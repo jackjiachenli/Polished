@@ -9,7 +9,11 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(ModuleManager.self) private var moduleManager
     @State private var axGranted = AccessibilityPermission.isGranted
+    @State private var inputMonitoringGranted = InputMonitoringPermission.isGranted
+    @State private var automationGranted = AutomationPermission.isGranted
+    @State private var launchAtLoginEnabled = LaunchAtLogin.isEnabled
     @State private var showRestartAlert = false
+    @State private var launchAtLoginError: String?
 
     private static let moduleDescriptions: [String: String] = [
         "app-quitter": "Quits apps when their last window is closed",
@@ -21,7 +25,29 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLoginEnabled },
+                    set: { newValue in
+                        do {
+                            try LaunchAtLogin.setEnabled(newValue)
+                            launchAtLoginEnabled = LaunchAtLogin.isEnabled
+                        } catch {
+                            launchAtLoginError = error.localizedDescription
+                            launchAtLoginEnabled = LaunchAtLogin.isEnabled
+                        }
+                    }
+                ))
+                Text("Install Polished in the Applications folder for reliable Launch at Login behavior.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Modules") {
+                if moduleManager.enabledModuleIDs.isEmpty {
+                    Text("Enable one or more modules below. Grant Accessibility (and Input Monitoring for Window Switcher / Finder Cut) under Permissions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(moduleManager.modules, id: \.id) { module in
                     Toggle(isOn: Binding(
                         get: { moduleManager.isEnabled(module) },
@@ -129,7 +155,38 @@ struct SettingsView: View {
                         AccessibilityPermission.openSystemSettings()
                     }
                 }
-                Text("Finder Cut also needs Input Monitoring (Privacy & Security). After changing permissions, quit and reopen Polished.")
+                LabeledContent("Input Monitoring") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(inputMonitoringGranted ? .green : .red)
+                            .frame(width: 8, height: 8)
+                        Text(inputMonitoringGranted ? "Granted" : "Not granted")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !inputMonitoringGranted {
+                    Button("Open Input Monitoring Settings") {
+                        InputMonitoringPermission.openSystemSettings()
+                    }
+                }
+                LabeledContent("Automation (Finder)") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(automationGranted ? .green : .red)
+                            .frame(width: 8, height: 8)
+                        Text(automationGranted ? "Granted" : "Not granted")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !automationGranted {
+                    Button("Open Automation Settings") {
+                        AutomationPermission.openSystemSettings()
+                    }
+                }
+                Text("Window Switcher and Finder Cut need Input Monitoring. Finder Cut may also need Automation — enable Finder Cut and approve the prompt when macOS asks.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("After changing permissions, quit and reopen Polished.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -140,8 +197,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 420, height: 520)
         .onAppear {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
+            AppActivation.activateForWindowPresentation()
             refreshPermissionStatus()
         }
         .onDisappear {
@@ -149,6 +205,14 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionStatus()
+        }
+        .alert("Launch at Login", isPresented: Binding(
+            get: { launchAtLoginError != nil },
+            set: { if !$0 { launchAtLoginError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(launchAtLoginError ?? "")
         }
         .alert("Restart Polished", isPresented: $showRestartAlert) {
             Button("Quit Polished") {
@@ -162,12 +226,17 @@ struct SettingsView: View {
 
     private func refreshPermissionStatus() {
         let axNow = AccessibilityPermission.isGranted
+        let inputNow = InputMonitoringPermission.isGranted
+        let automationNow = AutomationPermission.isGranted
 
-        if axNow, !axGranted {
+        if (axNow && !axGranted) || (inputNow && !inputMonitoringGranted) {
             showRestartAlert = true
         }
 
         axGranted = axNow
+        inputMonitoringGranted = inputNow
+        automationGranted = automationNow
+        launchAtLoginEnabled = LaunchAtLogin.isEnabled
 
         if moduleManager.isEnabled(moduleManager.finderEnhancements) {
             moduleManager.finderEnhancements.start()

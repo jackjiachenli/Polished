@@ -56,11 +56,9 @@ private struct MenuBarMenuContent: View {
     }
 
     private func openSettingsWindow() {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activateForWindowPresentation()
         openWindow(id: "settings")
 
-        // openWindow can fail silently in menu bar apps — ensure the window is visible
         DispatchQueue.main.async {
             guard let window = NSApp.windows.first(where: {
                 $0.identifier?.rawValue == "settings"

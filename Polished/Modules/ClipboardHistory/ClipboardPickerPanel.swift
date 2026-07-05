@@ -6,61 +6,115 @@
 import AppKit
 import SwiftUI
 
-@MainActor
-final class ClipboardPickerPanel: NSObject {
-    private var panel: FloatingPickerPanel?
-    private var hostingView: NSHostingView<ClipboardPickerView>?
-    private var keyMonitor: Any?
-    private var savedPasteTarget: NSRunningApplication?
+struct ClipboardPickerView: View {
+    @Bindable var history: ClipboardHistory
+    @State private var copiedItemID: UUID?
+    @State private var copiedFeedbackTask: Task<Void, Never>?
+    @State private var savedPasteTarget: NSRunningApplication?
+    @FocusState private var isFocused: Bool
 
-    func show(history: ClipboardHistory) {
-        let content = ClipboardPickerView(
-            history: history,
-            onSelect: { [weak self] item in
-                let target = self?.pasteTargetForPaste()
-                history.paste(item, activating: target)
-                self?.dismiss()
-            },
-            onDismiss: { [weak self] in
-                self?.dismiss()
+    var body: some View {
+        ZStack(alignment: .top) {
+            Form {
+                Section {
+                    if history.items.isEmpty {
+                        ContentUnavailableView(
+                            "No clipboard items",
+                            systemImage: "doc.on.clipboard",
+                            description: Text("Copy something to build your history.")
+                        )
+                    } else {
+                        ForEach(history.items) { item in
+                            ClipboardPickerRow(
+                                item: item,
+                                isSelected: history.selectedItemID == item.id,
+                                showCopied: copiedItemID == item.id,
+                                onSelect: { history.selectedItemID = item.id },
+                                onPaste: { paste(item) },
+                                onCopy: { copyItem(item) },
+                                onDelete: { history.deleteItem(item) }
+                            )
+                        }
+                    }
+                }
+                Section {
+                    HStack {
+                        Text("Click where to paste, then ↵ or double-click item")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if !history.items.isEmpty {
+                            Button("Clear All", role: .destructive) {
+                                history.clearHistory()
+                            }
+                        }
+                        Button("Cancel") {
+                            history.setPickerPresented(false)
+                        }
+                        .keyboardShortcut(.cancelAction)
+                    }
+                }
             }
-        )
+            .formStyle(.grouped)
 
-        if panel == nil {
-            let newPanel = FloatingPickerPanel()
-            newPanel.delegate = self
-            panel = newPanel
+            if copiedItemID != nil {
+                CopiedFeedbackBanner()
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(1)
+            }
         }
-
-        if let hostingView {
-            hostingView.rootView = content
-        } else {
-            let hosting = NSHostingView(rootView: content)
-            hosting.frame.size = NSSize(width: 420, height: 360)
-            hostingView = hosting
-            panel?.contentView = hosting
+        .frame(width: 420, height: 360)
+        .focused($isFocused)
+        .focusable()
+        .onAppear {
+            isFocused = true
+            capturePasteTarget()
         }
-
-        guard let panel else { return }
-
-        captureInitialPasteTarget()
-        history.resetPickerSelection()
-        center(panel)
-        panel.orderFrontRegardless()
-        panel.makeKey()
-        installKeyMonitor(history: history)
+        .onDisappear {
+            if !NSApp.windows.contains(where: { $0.identifier?.rawValue == "settings" && $0.isVisible }) {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window.identifier?.rawValue == "clipboard-picker" else { return }
+            capturePasteTarget()
+        }
+        .onKeyPress(.escape) {
+            history.setPickerPresented(false)
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            history.movePickerSelection(delta: -1)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            history.movePickerSelection(delta: 1)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            pasteSelectedItem()
+            return .handled
+        }
+        .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+            history.deleteSelectedItem()
+            return .handled
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: copiedItemID)
     }
 
-    func dismiss() {
-        removeKeyMonitor()
-        panel?.orderOut(nil)
+    private func paste(_ item: ClipboardItem) {
+        history.paste(item, activating: pasteTargetForPaste())
+        history.setPickerPresented(false)
     }
 
-    var isVisible: Bool {
-        panel?.isVisible == true
+    private func pasteSelectedItem() {
+        history.pasteSelectedPickerItem(activating: pasteTargetForPaste())
+        history.setPickerPresented(false)
     }
 
-    private func captureInitialPasteTarget() {
+    private func capturePasteTarget() {
         if let app = NSWorkspace.shared.frontmostApplication,
            app.bundleIdentifier != Bundle.main.bundleIdentifier {
             savedPasteTarget = app
@@ -73,149 +127,6 @@ final class ClipboardPickerPanel: NSObject {
             return frontmost
         }
         return savedPasteTarget
-    }
-
-    private func center(_ panel: NSPanel) {
-        if let screen = NSScreen.main {
-            let frame = panel.frame
-            let screenFrame = screen.visibleFrame
-            let origin = NSPoint(
-                x: screenFrame.midX - frame.width / 2,
-                y: screenFrame.midY - frame.height / 2
-            )
-            panel.setFrameOrigin(origin)
-        }
-    }
-
-    private func installKeyMonitor(history: ClipboardHistory) {
-        removeKeyMonitor()
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard self?.panel?.isVisible == true else { return event }
-
-            switch event.keyCode {
-            case 53: // Escape
-                self?.dismiss()
-                return nil
-            case 125: // Down
-                history.movePickerSelection(delta: 1)
-                return nil
-            case 126: // Up
-                history.movePickerSelection(delta: -1)
-                return nil
-            case 36, 76: // Return, keypad Enter
-                history.pasteSelectedPickerItem(activating: self?.pasteTargetForPaste())
-                self?.dismiss()
-                return nil
-            case 51, 117: // Backspace, Forward Delete
-                history.deleteSelectedItem()
-                return nil
-            default:
-                return event
-            }
-        }
-    }
-
-    private func removeKeyMonitor() {
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
-            self.keyMonitor = nil
-        }
-    }
-}
-
-extension ClipboardPickerPanel: NSWindowDelegate {
-    func windowDidResignKey(_ notification: Notification) {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            return
-        }
-        savedPasteTarget = app
-    }
-}
-
-private final class FloatingPickerPanel: NSPanel {
-    init() {
-        super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 360),
-            styleMask: [.nonactivatingPanel, .titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        isFloatingPanel = true
-        level = .popUpMenu
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        title = "Clipboard History"
-        titlebarAppearsTransparent = false
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        becomesKeyOnlyIfNeeded = false
-    }
-
-    override var canBecomeMain: Bool { false }
-}
-
-private struct ClipboardPickerView: View {
-    @Bindable var history: ClipboardHistory
-    let onSelect: (ClipboardItem) -> Void
-    let onDismiss: () -> Void
-
-    @State private var copiedItemID: UUID?
-    @State private var copiedFeedbackTask: Task<Void, Never>?
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 0) {
-                if history.items.isEmpty {
-                    ContentUnavailableView(
-                        "No clipboard items",
-                        systemImage: "doc.on.clipboard",
-                        description: Text("Copy something to build your history.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(history.items) { item in
-                                ClipboardPickerRow(
-                                    item: item,
-                                    isSelected: history.selectedItemID == item.id,
-                                    showCopied: copiedItemID == item.id,
-                                    onSelect: { history.selectedItemID = item.id },
-                                    onPaste: { onSelect(item) },
-                                    onCopy: { copyItem(item) },
-                                    onDelete: { history.deleteItem(item) }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                }
-
-                HStack {
-                    Text("Click where to paste, then ↵ or double-click item")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if !history.items.isEmpty {
-                        Button("Clear All", role: .destructive) {
-                            history.clearHistory()
-                        }
-                    }
-                    Button("Cancel") { onDismiss() }
-                        .keyboardShortcut(.cancelAction)
-                }
-                .padding(12)
-            }
-
-            if copiedItemID != nil {
-                CopiedFeedbackBanner()
-                    .padding(.top, 10)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(1)
-            }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: copiedItemID)
     }
 
     private func copyItem(_ item: ClipboardItem) {
@@ -302,8 +213,7 @@ private struct ClipboardPickerRow: View {
             .buttonStyle(.plain)
             .help("Delete")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
         .background {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)

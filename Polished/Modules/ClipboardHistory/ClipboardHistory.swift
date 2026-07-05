@@ -150,8 +150,10 @@ final class ClipboardHistory: Module {
     private var activePollsRemaining = 0
     private var isInternalWrite = false
     private var globalHotkey: GlobalHotkey?
-    private var pickerPanel: ClipboardPickerPanel?
     private var saveWorkItem: DispatchWorkItem?
+
+    /// When true, the app opens the native SwiftUI clipboard picker window.
+    var pickerPresented = false
 
     init() {
         maxItems = UserDefaults.standard.object(forKey: Self.maxItemsKey) as? Int ?? 25
@@ -182,8 +184,7 @@ final class ClipboardHistory: Module {
         activePollsRemaining = 0
         globalHotkey?.unregister()
         globalHotkey = nil
-        pickerPanel?.dismiss()
-        pickerPanel = nil
+        ClipboardPickerWindowController.shared.close()
         items.removeAll()
         selectedItemID = nil
     }
@@ -223,13 +224,22 @@ final class ClipboardHistory: Module {
     }
 
     func togglePicker() {
-        let panel = pickerPanel ?? ClipboardPickerPanel()
-        pickerPanel = panel
-        if panel.isVisible {
-            panel.dismiss()
+        if ClipboardPickerWindowController.shared.isVisible {
+            ClipboardPickerWindowController.shared.close()
         } else {
             pollPasteboard()
-            panel.show(history: self)
+            ClipboardPickerWindowController.shared.show(history: self)
+        }
+    }
+
+    func setPickerPresented(_ presented: Bool) {
+        if presented {
+            guard !ClipboardPickerWindowController.shared.isVisible else { return }
+            pollPasteboard()
+            resetPickerSelection()
+            ClipboardPickerWindowController.shared.show(history: self)
+        } else {
+            ClipboardPickerWindowController.shared.close()
         }
     }
 
