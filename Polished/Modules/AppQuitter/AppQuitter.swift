@@ -107,6 +107,13 @@ final class AppQuitter: Module {
             refcon
         )
 
+        AXObserverAddNotification(
+            observer,
+            axApp,
+            kAXFocusedWindowChangedNotification as CFString,
+            refcon
+        )
+
         syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
 
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
@@ -127,6 +134,17 @@ final class AppQuitter: Module {
         syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
     }
 
+    fileprivate func handleFocusedWindowChanged(pid: pid_t) {
+        guard axObservers[pid] != nil else { return }
+        guard let app = monitoredApps[pid] else { return }
+        // Tab switches keep a focused window; only nil focus means possible last-window close.
+        guard WindowAccessibility.focusedWindow(in: app) == nil else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.evaluateQuit(pid: pid)
+        }
+    }
+
     fileprivate func handleWindowDestroyed(pid: pid_t, element: AXUIElement) {
         guard axObservers[pid] != nil else { return }
 
@@ -138,13 +156,9 @@ final class AppQuitter: Module {
             return
         }
 
-        if wasTracked {
-            evaluateQuit(pid: pid)
-        } else {
-            // CFEqual can fail across AX wrappers; defer one runloop turn so the AX tree can update.
-            DispatchQueue.main.async { [weak self] in
-                self?.evaluateQuit(pid: pid)
-            }
+        // Defer so Chromium's AX tree can settle before the resync in evaluateQuit.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.evaluateQuit(pid: pid)
         }
     }
 
@@ -207,6 +221,8 @@ final class AppQuitter: Module {
             }
         }
 
+        if WindowAccessibility.isHidden(window) { return false }
+
         var minimized: CFTypeRef?
         AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
         if (minimized as? Bool) == true { return false }
@@ -233,13 +249,48 @@ final class AppQuitter: Module {
             syncTrackedWindows(pid: pid, observer: observer, refcon: refcon)
         }
 
-        guard trackedVisibleWindows[pid]?.isEmpty ?? true else { return }
+        if !(trackedVisibleWindows[pid]?.isEmpty ?? true) {
+            // Chromium tiebreaker: phantom AX windows with no on-screen CG backing.
+            if hasRealOnScreenWindows(pid: pid) { return }
+            trackedVisibleWindows[pid] = []
+        }
 
         let label = app.localizedName ?? app.bundleIdentifier ?? "unknown"
         print("AppQuitter: Terminating \(label) (pid \(pid)) — no visible windows remaining")
         let quit = app.terminate()
         print("AppQuitter: terminate() returned \(quit) for \(label) (pid \(pid))")
         stopMonitoring(pid: pid)
+    }
+
+    /// True when at least one tracked AX window maps to an on-screen CG window for this process.
+    private func hasRealOnScreenWindows(pid: pid_t) -> Bool {
+        let onScreenIDs = WindowAccessibility.onScreenWindowIDs()
+
+        if let tracked = trackedVisibleWindows[pid] {
+            for window in tracked {
+                if let id = WindowAccessibility.windowID(of: window), onScreenIDs.contains(id) {
+                    return true
+                }
+            }
+        }
+
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return false
+        }
+
+        for info in list {
+            guard let infoPID = info[kCGWindowOwnerPID as String] as? pid_t, infoPID == pid else { continue }
+            if let layer = info[kCGWindowLayer as String] as? Int, layer != 0 { continue }
+            if let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+               let width = bounds["Width"], let height = bounds["Height"],
+               width >= 100, height >= 100 {
+                return true
+            }
+        }
+
+        return false
     }
 }
 
@@ -260,6 +311,8 @@ private func axObserverCallback(
     DispatchQueue.main.async {
         if notificationName == kAXWindowCreatedNotification as String {
             quitter.handleWindowCreated(pid: pid)
+        } else if notificationName == kAXFocusedWindowChangedNotification as String {
+            quitter.handleFocusedWindowChanged(pid: pid)
         } else if notificationName == kAXUIElementDestroyedNotification as String {
             quitter.handleWindowDestroyed(pid: pid, element: element)
         }
