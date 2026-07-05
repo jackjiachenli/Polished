@@ -15,6 +15,10 @@ Run before tagging a release.
 - [ ] Automation (Finder) status reflects System Settings (may show Not granted until Finder Cut triggers the prompt)
 - [ ] Deep links open the correct Privacy panes
 
+## General (Settings)
+
+- [ ] **Launch at Login** — toggle on/off from `/Applications`; log out/in (or reboot) and confirm Polished starts without manual launch
+
 ## Modules (enable → exercise → disable)
 
 - [ ] **App Quitter** — close last window on a native app; Chrome if available

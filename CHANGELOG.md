@@ -14,6 +14,7 @@ First public release.
 - **Clipboard History** — text, image, and file URL history with configurable hotkey and persistence
 - **Finder Enhancements** — cut-to-move files with ⌘X / ⌘V
 - Menu bar toggles and Settings window for module configuration
+- **Launch at Login** — start Polished automatically at sign-in (Settings → General; install to Applications)
 - Accessibility permission prompt and status in Settings
 
 ### Known issues

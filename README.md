@@ -4,7 +4,7 @@ A suite of macOS utilities that fix the small things Windows switchers miss.
 
 **Requires macOS 26.5 or later.**
 
-Polished lives in the menu bar. Enable modules from the menu or **Settings…**, grant the permissions each module needs, and quit/reopen Polished after changing privacy settings.
+Polished lives in the menu bar. Enable modules from the menu or **Settings…**, grant the permissions each module needs, and quit/reopen Polished after changing privacy settings. Use **Settings → General → Launch at login** to start Polished at sign-in (install to **Applications** for reliable behavior).
 
 ## Modules
 
@@ -60,6 +60,8 @@ Output: `dist/Polished.dmg`
 | **Automation** (Finder) | Finder Cut paste destination in some setups |
 
 Check status in **Settings → Permissions**. After changing permissions in System Settings, **quit and reopen Polished**.
+
+**Launch at Login** is under **Settings → General**. For reliable login-item behavior, install Polished in **Applications** before enabling the toggle.
 
 ## Known limitations
 
